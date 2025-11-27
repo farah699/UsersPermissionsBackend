@@ -1,85 +1,110 @@
-# Users & Permissions Management Backend
+# Users & Permissions Management Dashboard - Backend API
 
-A comprehensive RBAC (Role-Based Access Control) system built with **Express.js**, **TypeScript**, and **MongoDB**. This backend provides a complete user and permissions management API with authentication, authorization, audit logging, and comprehensive security features.
+## 🚀 **Overview**
 
-## 🚀 Features
+A robust Express.js TypeScript backend API with MongoDB for a comprehensive Users & Permissions Management Dashboard featuring Role-Based Access Control (RBAC), JWT authentication, audit logging, and comprehensive user management.
 
-### 🔐 Authentication & Security
-- JWT-based authentication with access and refresh tokens
+## 📋 **Features**
+
+### 🔐 **Authentication & Security**
+- JWT-based authentication with refresh tokens
 - Password hashing with bcrypt
-- Rate limiting and CORS protection
-- Email verification and password reset (stubbed for demo)
-- Session management with token blacklisting
+- Protected API endpoints with middleware
+- Rate limiting and security headers
+- Schema validation with Joi
 
-### 👥 User Management
+### 👥 **User Management** 
 - Complete CRUD operations for users
-- User search, pagination, and filtering
+- Search, filter, sort, and pagination
 - User activation/deactivation
-- Profile management with role assignment
+- Role assignment and management
+- Profile management with validation
 
-### 🛡️ RBAC System
-- **Roles**: Create, update, delete, and manage roles
-- **Permissions**: Granular permission system with resource-action pairs
-- **Guards**: Route-level and method-level authorization
-- **Hierarchical Access**: Support for multiple roles per user
+### 🛡️ **Role-Based Access Control (RBAC)**
+- **Users ↔ Roles**: Many-to-many relationship
+- **Roles ↔ Permissions**: Many-to-many relationship  
+- Route-level permission guards
+- Resource-based authorization
+- Dynamic permission checking
 
-### 📊 Audit Logging
-- Complete audit trail of all user actions
-- User activity tracking
-- System statistics and reporting
-- Searchable audit logs with filtering
+### 📊 **Modules**
+- **Users**: CRUD, search, pagination, role assignment
+- **Roles**: CRUD, permission attachment/detachment
+- **Permissions**: Pre-seeded common actions (user.read, user.create, etc.)
+- **Audit Logs**: Track all role/permission changes with timestamps
 
-### 📚 API Documentation
-- Complete Swagger/OpenAPI documentation
-- Interactive API explorer
-- Request/response schemas
-- Authentication examples
+### 📚 **API Documentation**
+- Swagger/OpenAPI documentation
+- Interactive API testing interface
+- Comprehensive endpoint documentation
 
-## 🛠️ Technology Stack
+## 🛠️ **Tech Stack**
 
-- **Runtime**: Node.js with TypeScript
-- **Framework**: Express.js
+- **Runtime**: Node.js 18+
+- **Framework**: Express.js 4.18+
+- **Language**: TypeScript 5.2+
 - **Database**: MongoDB with Mongoose ODM
-- **Authentication**: JWT (JSON Web Tokens)
+- **Authentication**: JWT + bcrypt
 - **Validation**: Joi schema validation
-- **Documentation**: Swagger/OpenAPI
-- **Security**: Helmet, CORS, Rate Limiting
-- **Password Hashing**: bcrypt
+- **Documentation**: Swagger/OpenAPI 3.0
+- **Development**: Nodemon, Concurrently
 
-## 📋 Prerequisites
+## 📁 **Project Structure**
 
-- Node.js (v16 or higher)
-- MongoDB (v5.0 or higher)
-- npm or yarn package manager
+```
+src/
+├── config/          # Database and app configuration
+├── middleware/      # Auth, validation, error handling
+├── models/          # Mongoose schemas (User, Role, Permission, AuditLog)
+├── routes/          # API route handlers
+├── scripts/         # Database seeding scripts
+├── validation/      # Joi validation schemas
+└── server.ts        # Express app setup and startup
+```
 
-## ⚙️ Installation & Setup
+## ⚙️ **Installation & Setup**
 
-### 1. Clone the Repository
+- Node.js 18+ installed
+- MongoDB running locally or MongoDB Atlas connection
+- Git installed
 
+### **1. Clone Repository**
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/farah699/users-permissions-backend.git
 cd users-permissions-backend
 ```
 
-### 2. Install Dependencies
-
+### **2. Install Dependencies**
 ```bash
 npm install
 ```
 
-### 3. Environment Configuration
-
-Copy the example environment file and configure your settings:
-
+### **3. Environment Configuration**
+Copy the environment template and configure your variables:
 ```bash
 cp .env.example .env
 ```
 
-Update `.env` with your configuration:
-
+Edit `.env` with your configuration:
 ```env
-# Environment
+# Server Configuration
 NODE_ENV=development
+PORT=5000
+
+# Database
+MONGODB_URI=mongodb://localhost:27017/users-permissions-db
+
+# JWT Secrets (Generate secure random strings)
+JWT_SECRET=your-super-secure-jwt-secret-key
+JWT_REFRESH_SECRET=your-super-secure-refresh-secret-key
+
+# JWT Expiration
+JWT_EXPIRES_IN=24h
+JWT_REFRESH_EXPIRES_IN=7d
+
+# Admin User (for seeding)
+ADMIN_EMAIL=admin@example.com
+ADMIN_PASSWORD=AdminPass123!
 PORT=5000
 
 # Database
@@ -92,41 +117,28 @@ JWT_ACCESS_EXPIRES_IN=15m
 JWT_REFRESH_EXPIRES_IN=7d
 
 # Security
-BCRYPT_ROUNDS=12
-RATE_LIMIT_WINDOW_MS=900000
-RATE_LIMIT_MAX_REQUESTS=100
-
-# CORS
-FRONTEND_URL=http://localhost:3000
 ```
 
-### 4. Build the Project
-
+### **4. Database Setup**
 ```bash
-npm run build
-```
-
-### 5. Seed the Database
-
-Populate the database with initial data (permissions, roles, and sample users):
-
-```bash
+# Seed the database with admin user, roles, and permissions
 npm run seed
 ```
 
-### 6. Start the Server
-
-For development:
+### **5. Development**
 ```bash
+# Start development server with hot reload
 npm run dev
-```
 
-For production:
-```bash
+# Or build and start production
+npm run build
 npm start
 ```
 
-The server will start on `http://localhost:5000`
+### **6. Access Points**
+- **API Base URL**: http://localhost:5000/api
+- **API Documentation**: http://localhost:5000/api-docs
+- **Health Check**: http://localhost:5000/health
 
 ## 📚 API Documentation
 
