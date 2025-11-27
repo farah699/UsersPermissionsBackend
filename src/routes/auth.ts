@@ -9,10 +9,190 @@ import {
   refreshTokenSchema, 
   forgotPasswordSchema, 
   resetPasswordSchema,
-  changePasswordSchema
+  changePasswordSchema,
+  signupSchema
 } from '../validation/schemas';
 
 const router = express.Router();
+
+/**
+ * @swagger
+ * /api/auth/signup:
+ *   post:
+ *     summary: User registration
+ *     tags: [Authentication]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *               - password
+ *               - confirmPassword
+ *               - firstName
+ *               - lastName
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 description: User email address
+ *               password:
+ *                 type: string
+ *                 minLength: 8
+ *                 description: User password (min 8 chars, must contain uppercase, lowercase, number, special char)
+ *               confirmPassword:
+ *                 type: string
+ *                 description: Password confirmation
+ *               firstName:
+ *                 type: string
+ *                 minLength: 2
+ *                 maxLength: 50
+ *                 description: User first name
+ *               lastName:
+ *                 type: string
+ *                 minLength: 2
+ *                 maxLength: 50
+ *                 description: User last name
+ *     responses:
+ *       201:
+ *         description: User registered successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     user:
+ *                       $ref: '#/components/schemas/User'
+ *                     accessToken:
+ *                       type: string
+ *                     refreshToken:
+ *                       type: string
+ *       400:
+ *         description: Validation error or user already exists
+ *       500:
+ *         description: Internal server error
+ */
+router.post('/signup', async (req: Request, res: Response): Promise<void> => {
+  try {
+    // Validate request body
+    const { error, value } = signupSchema.validate(req.body);
+    if (error) {
+      res.status(400).json({
+        success: false,
+        message: 'Validation error',
+        errors: error.details
+      });
+      return;
+    }
+
+    const { email, password, confirmPassword, firstName, lastName } = value;
+
+    // Check if passwords match
+    if (password !== confirmPassword) {
+      res.status(400).json({
+        success: false,
+        message: 'Passwords do not match'
+      });
+      return;
+    }
+
+    // Check if user already exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      res.status(400).json({
+        success: false,
+        message: 'User with this email already exists'
+      });
+      return;
+    }
+
+    // Get default role (User role)
+    const defaultRole = await require('../models/Role').Role.findOne({ name: 'User' });
+    if (!defaultRole) {
+      // If no default role exists, create user without roles
+      console.warn('Default "User" role not found. Creating user without roles.');
+    }
+
+    // Generate email verification token
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+    const hashedVerificationToken = crypto
+      .createHash('sha256')
+      .update(verificationToken)
+      .digest('hex');
+
+    // Create new user
+    const newUser = await User.create({
+      email,
+      password,
+      firstName,
+      lastName,
+      roles: defaultRole ? [defaultRole._id] : [],
+      isActive: true,
+      isEmailVerified: false, // Email verification required
+      emailVerificationToken: hashedVerificationToken,
+      emailVerificationExpires: new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 hours
+    });
+
+    // Generate tokens
+    const accessToken = newUser.generateAccessToken();
+    const refreshToken = newUser.generateRefreshToken();
+
+    // Save refresh token
+    newUser.refreshTokens.push(refreshToken);
+    await newUser.save();
+
+    // Send verification email
+    const { emailService } = await import('../services/emailService');
+    const emailSent = await emailService.sendEmailVerification({
+      userName: `${newUser.firstName} ${newUser.lastName}`,
+      userEmail: newUser.email,
+      verificationToken: verificationToken, // Use original token, not hashed
+      verificationUrl: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/verify-email?token=${verificationToken}`
+    });
+
+    // Create audit log
+    await AuditLog.createLog({
+      action: 'create',
+      resource: 'user',
+      resourceId: newUser._id.toString(),
+      userId: newUser._id,
+      userEmail: newUser.email,
+      metadata: { action: 'signup', emailVerificationSent: emailSent },
+      ipAddress: req.ip,
+      userAgent: req.get('User-Agent')
+    });
+
+    // Populate user roles for response
+    await newUser.populate('roles');
+
+    res.status(201).json({
+      success: true,
+      message: emailSent 
+        ? 'Account created successfully! Please check your email to verify your account.'
+        : 'Account created successfully! Email verification will be sent shortly.',
+      data: {
+        user: newUser,
+        accessToken,
+        refreshToken
+      }
+    });
+  } catch (error) {
+    console.error('Signup error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to create account'
+    });
+  }
+});
 
 /**
  * @swagger
@@ -772,6 +952,291 @@ router.post('/change-password', authenticate, async (req: Request, res: Response
     res.status(500).json({
       success: false,
       message: 'Failed to change password'
+    });
+  }
+});
+
+/**
+ * @swagger
+ * /api/auth/verify-email:
+ *   post:
+ *     summary: Verify user email
+ *     tags: [Authentication]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - token
+ *             properties:
+ *               token:
+ *                 type: string
+ *                 description: Email verification token
+ *     responses:
+ *       200:
+ *         description: Email verified successfully
+ *       400:
+ *         description: Invalid or expired token
+ */
+router.post('/verify-email', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { token } = req.body;
+
+    if (!token) {
+      res.status(400).json({
+        success: false,
+        message: 'Verification token is required'
+      });
+      return;
+    }
+
+    // Hash the token to compare with stored hash
+    const hashedToken = crypto
+      .createHash('sha256')
+      .update(token)
+      .digest('hex');
+
+    // Find user with this token
+    const user = await User.findOne({
+      emailVerificationToken: hashedToken,
+      emailVerificationExpires: { $gt: new Date() }
+    });
+
+    if (!user) {
+      res.status(400).json({
+        success: false,
+        message: 'Invalid or expired verification token'
+      });
+      return;
+    }
+
+    // Update user
+    user.isEmailVerified = true;
+    user.emailVerificationToken = undefined;
+    user.emailVerificationExpires = undefined;
+    await user.save();
+
+    // Create audit log
+    await AuditLog.createLog({
+      action: 'update',
+      resource: 'user',
+      resourceId: user._id.toString(),
+      userId: user._id,
+      userEmail: user.email,
+      metadata: { action: 'email_verification_completed' },
+      ipAddress: req.ip,
+      userAgent: req.get('User-Agent')
+    });
+
+    res.json({
+      success: true,
+      message: 'Email verified successfully! You can now use all features.'
+    });
+  } catch (error) {
+    console.error('Email verification error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to verify email'
+    });
+  }
+});
+
+/**
+ * @swagger
+ * /api/auth/forgot-password:
+ *   post:
+ *     summary: Request password reset
+ *     tags: [Authentication]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 description: User's email address
+ *     responses:
+ *       200:
+ *         description: Password reset email sent
+ *       404:
+ *         description: User not found
+ */
+router.post('/forgot-password', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      res.status(400).json({
+        success: false,
+        message: 'Email is required'
+      });
+      return;
+    }
+
+    // Find user by email
+    const user = await User.findOne({ email });
+
+    // Always return success for security (don't reveal if email exists)
+    if (!user) {
+      res.json({
+        success: true,
+        message: 'If an account with that email exists, we\'ve sent password reset instructions.'
+      });
+      return;
+    }
+
+    // Generate reset token
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const hashedToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+
+    // Set token and expiry (1 hour)
+    user.passwordResetToken = hashedToken;
+    user.passwordResetExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+    await user.save();
+
+    // Send reset email
+    try {
+      await emailService.sendPasswordResetNotification(user.email, user.firstName, resetToken);
+      
+      // Create audit log
+      await AuditLog.createLog({
+        action: 'create',
+        resource: 'auth',
+        resourceId: user._id.toString(),
+        userId: user._id,
+        userEmail: user.email,
+        metadata: { action: 'password_reset_requested' },
+        ipAddress: req.ip,
+        userAgent: req.get('User-Agent')
+      });
+    } catch (emailError) {
+      console.error('Failed to send password reset email:', emailError);
+      // Don't fail the request if email fails, for security
+    }
+
+    res.json({
+      success: true,
+      message: 'If an account with that email exists, we\'ve sent password reset instructions.'
+    });
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to process password reset request'
+    });
+  }
+});
+
+/**
+ * @swagger
+ * /api/auth/reset-password:
+ *   post:
+ *     summary: Reset password with token
+ *     tags: [Authentication]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - token
+ *               - password
+ *             properties:
+ *               token:
+ *                 type: string
+ *                 description: Password reset token
+ *               password:
+ *                 type: string
+ *                 minLength: 8
+ *                 description: New password
+ *     responses:
+ *       200:
+ *         description: Password reset successfully
+ *       400:
+ *         description: Invalid or expired token
+ */
+router.post('/reset-password', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { token, password } = req.body;
+
+    if (!token || !password) {
+      res.status(400).json({
+        success: false,
+        message: 'Token and password are required'
+      });
+      return;
+    }
+
+    // Validate password strength
+    if (password.length < 8) {
+      res.status(400).json({
+        success: false,
+        message: 'Password must be at least 8 characters long'
+      });
+      return;
+    }
+
+    // Hash the token to compare with stored hash
+    const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+
+    // Find user with this token
+    const user = await User.findOne({
+      passwordResetToken: hashedToken,
+      passwordResetExpires: { $gt: new Date() }
+    });
+
+    if (!user) {
+      res.status(400).json({
+        success: false,
+        message: 'Invalid or expired reset token'
+      });
+      return;
+    }
+
+    // Hash new password
+    const saltRounds = 12;
+    const hashedPassword = await bcrypt.hash(password, saltRounds);
+
+    // Update user password and clear reset token
+    user.password = hashedPassword;
+    user.passwordResetToken = undefined;
+    user.passwordResetExpires = undefined;
+    user.passwordChangedAt = new Date();
+    await user.save();
+
+    // Invalidate all existing sessions by incrementing tokenVersion
+    user.tokenVersion += 1;
+    await user.save();
+
+    // Create audit log
+    await AuditLog.createLog({
+      action: 'update',
+      resource: 'user',
+      resourceId: user._id.toString(),
+      userId: user._id,
+      userEmail: user.email,
+      metadata: { action: 'password_reset_completed' },
+      ipAddress: req.ip,
+      userAgent: req.get('User-Agent')
+    });
+
+    res.json({
+      success: true,
+      message: 'Password reset successfully! You can now sign in with your new password.'
+    });
+  } catch (error) {
+    console.error('Reset password error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to reset password'
     });
   }
 });

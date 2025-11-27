@@ -16,11 +16,18 @@ interface PasswordChangeEmailData {
   ipAddress?: string;
 }
 
+interface EmailVerificationData {
+  userName: string;
+  userEmail: string;
+  verificationToken: string;
+  verificationUrl: string;
+}
+
 class EmailService {
   private transporter: nodemailer.Transporter;
   
   constructor() {
-    this.transporter = nodemailer.createTransporter({
+    this.transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST || 'smtp.gmail.com',
       port: parseInt(process.env.SMTP_PORT || '587'),
       secure: false, // true for 465, false for other ports
@@ -223,6 +230,88 @@ OpusLab Support Team
 
     return await this.sendEmail({
       to: userEmail,
+      subject,
+      text,
+      html
+    });
+  }
+
+  async sendEmailVerification(data: EmailVerificationData): Promise<boolean> {
+    const subject = '✉️ Verify Your Email Address';
+    
+    const text = `
+Hello ${data.userName},
+
+Welcome to OpusLab! Please verify your email address to complete your account setup.
+
+Click the link below to verify your email:
+${data.verificationUrl}
+
+This link will expire in 24 hours for security reasons.
+
+If you didn't create this account, please ignore this email.
+
+Best regards,
+OpusLab Team
+    `;
+
+    const html = `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px; text-align: center; }
+        .welcome-icon { color: #28a745; font-size: 48px; }
+        .button { display: inline-block; background-color: #007bff; color: white; padding: 16px 32px; text-decoration: none; border-radius: 8px; margin: 20px 0; font-weight: bold; }
+        .button:hover { background-color: #0056b3; }
+        .warning { background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 4px; margin: 20px 0; }
+        .footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #dee2e6; font-size: 12px; color: #6c757d; text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="welcome-icon">🎉</div>
+            <h1>Welcome to OpusLab!</h1>
+            <p>Thank you for joining our platform</p>
+        </div>
+        
+        <p>Hello <strong>${data.userName}</strong>,</p>
+        
+        <p>Welcome to OpusLab! We're excited to have you on board.</p>
+        
+        <p>To complete your account setup and start using all features, please verify your email address by clicking the button below:</p>
+        
+        <div style="text-align: center;">
+            <a href="${data.verificationUrl}" class="button">Verify Email Address</a>
+        </div>
+        
+        <div class="warning">
+            <strong>Important:</strong> This verification link will expire in 24 hours for security reasons.
+        </div>
+        
+        <p>If the button above doesn't work, you can copy and paste this link into your browser:</p>
+        <p style="word-break: break-all; background-color: #f8f9fa; padding: 10px; border-radius: 4px;">
+            ${data.verificationUrl}
+        </p>
+        
+        <p>If you didn't create this account, please ignore this email.</p>
+        
+        <div class="footer">
+            <p>Best regards,<br>
+            <strong>OpusLab Team</strong></p>
+            <p><em>This is an automated message. Please do not reply to this email.</em></p>
+        </div>
+    </div>
+</body>
+</html>
+    `;
+
+    return await this.sendEmail({
+      to: data.userEmail,
       subject,
       text,
       html
