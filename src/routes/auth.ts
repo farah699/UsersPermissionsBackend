@@ -627,4 +627,153 @@ router.post('/reset-password', async (req: Request, res: Response): Promise<void
   }
 });
 
+/**
+ * @swagger
+ * /api/auth/change-password:
+ *   post:
+ *     summary: Change user password
+ *     tags: [Authentication]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - currentPassword
+ *               - newPassword
+ *             properties:
+ *               currentPassword:
+ *                 type: string
+ *                 description: Current password
+ *               newPassword:
+ *                 type: string
+ *                 description: New password (min 8 chars)
+ *               confirmPassword:
+ *                 type: string
+ *                 description: Confirm new password
+ *     responses:
+ *       200:
+ *         description: Password changed successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     emailSent:
+ *                       type: boolean
+ *       400:
+ *         description: Validation error or incorrect current password
+ *       401:
+ *         description: Unauthorized - invalid token
+ *       500:
+ *         description: Internal server error
+ */
+router.post('/change-password', authenticate, async (req: Request, res: Response) => {
+  try {
+    const { error } = changePasswordSchema.validate(req.body);
+    if (error) {
+      res.status(400).json({
+        success: false,
+        message: 'Validation error',
+        errors: error.details
+      });
+      return;
+    }
+
+    const { currentPassword, newPassword, confirmPassword } = req.body;
+    const userId = (req as any).user.id;
+
+    // Get user with password
+    const user = await User.findById(userId).select('+password');
+    if (!user) {
+      res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+      return;
+    }
+
+    // Verify current password
+    const isCurrentPasswordValid = await user.comparePassword(currentPassword);
+    if (!isCurrentPasswordValid) {
+      res.status(400).json({
+        success: false,
+        message: 'Current password is incorrect'
+      });
+      return;
+    }
+
+    // Check if new password is different from current
+    const isSamePassword = await user.comparePassword(newPassword);
+    if (isSamePassword) {
+      res.status(400).json({
+        success: false,
+        message: 'New password must be different from current password'
+      });
+      return;
+    }
+
+    // Validate password confirmation
+    if (newPassword !== confirmPassword) {
+      res.status(400).json({
+        success: false,
+        message: 'Password confirmation does not match'
+      });
+      return;
+    }
+
+    // Update password
+    user.password = newPassword;
+    // Clear all refresh tokens to force re-login on all devices
+    user.refreshTokens = [];
+    await user.save();
+
+    // Create audit log
+    await AuditLog.createLog({
+      action: 'update',
+      resource: 'user',
+      resourceId: user._id.toString(),
+      userId: user._id,
+      userEmail: user.email,
+      metadata: { action: 'password_change', changedBy: 'self' },
+      ipAddress: req.ip,
+      userAgent: req.get('User-Agent')
+    });
+
+    // Send email notification
+    const { emailService } = await import('../services/emailService');
+    const emailSent = await emailService.sendPasswordChangeNotification({
+      userName: `${user.firstName} ${user.lastName}`,
+      userEmail: user.email,
+      changedBy: `${user.firstName} ${user.lastName} (self)`,
+      timestamp: new Date(),
+      ipAddress: req.ip
+    });
+
+    res.json({
+      success: true,
+      message: 'Password changed successfully. Please login again with your new password.',
+      data: {
+        emailSent
+      }
+    });
+  } catch (error) {
+    console.error('Change password error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to change password'
+    });
+  }
+});
+
 export default router;
