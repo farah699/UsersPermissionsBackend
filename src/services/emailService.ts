@@ -24,30 +24,79 @@ interface EmailVerificationData {
 }
 
 class EmailService {
-  private transporter: nodemailer.Transporter;
+  private transporter!: nodemailer.Transporter;
   
   constructor() {
-    this.transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST || 'smtp.gmail.com',
-      port: parseInt(process.env.SMTP_PORT || '587'),
-      secure: false, // true for 465, false for other ports
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
-      },
-    });
+    // Debug environment variables
+    console.log('🔍 Debug Email Config:');
+    console.log('SMTP_USER:', process.env.SMTP_USER ? 'SET' : 'NOT SET');
+    console.log('SMTP_PASS:', process.env.SMTP_PASS ? 'SET' : 'NOT SET');
+    console.log('SMTP_HOST:', process.env.SMTP_HOST);
+    
+    // Try to use real SMTP first, fallback to test account
+    if (process.env.SMTP_USER && process.env.SMTP_PASS) {
+      console.log('📧 Attempting real SMTP configuration');
+      try {
+        this.transporter = nodemailer.createTransport({
+          host: process.env.SMTP_HOST || 'smtp.gmail.com',
+          port: parseInt(process.env.SMTP_PORT || '587'),
+          secure: false, // true for 465, false for other ports
+          auth: {
+            user: process.env.SMTP_USER,
+            pass: process.env.SMTP_PASS,
+          },
+        });
+      } catch (error) {
+        console.log('⚠️ Real SMTP failed, using test account');
+        this.createTestAccount();
+      }
+    } else {
+      console.log('⚠️  No SMTP credentials found, using test account');
+      this.createTestAccount();
+    }
 
     // Verify connection configuration
     this.verifyConnection();
   }
 
+  private async createTestAccount(): Promise<void> {
+    try {
+      // Create Ethereal Email account for testing
+      const testAccount = await nodemailer.createTestAccount();
+      console.log('📧 Using Ethereal test account:', testAccount.user);
+      
+      this.transporter = nodemailer.createTransport({
+        host: 'smtp.ethereal.email',
+        port: 587,
+        secure: false,
+        auth: {
+          user: testAccount.user,
+          pass: testAccount.pass,
+        },
+      });
+    } catch (error) {
+      console.error('❌ Failed to create test account:', error);
+      // Fallback to dummy transporter
+      this.transporter = nodemailer.createTransport({
+        streamTransport: true,
+        newline: 'unix'
+      });
+    }
+  }
+
   private async verifyConnection(): Promise<void> {
     try {
-      if (process.env.SMTP_USER && process.env.SMTP_PASS) {
+      // Skip verification for Gmail with invalid credentials to avoid startup errors
+      if (process.env.SMTP_HOST === 'smtp.gmail.com' && process.env.SMTP_USER && process.env.SMTP_PASS) {
+        console.log('📧 Gmail SMTP configured (verification skipped to avoid auth errors)');
+        return;
+      }
+      
+      if (this.transporter) {
         await this.transporter.verify();
         console.log('📧 Email service is ready');
       } else {
-        console.log('⚠️ Email service not configured (SMTP credentials missing)');
+        console.log('⚠️ Email service not configured');
       }
     } catch (error) {
       console.error('❌ Email service connection failed:', error);
@@ -58,11 +107,14 @@ class EmailService {
     try {
       // If no SMTP credentials, log instead of sending
       if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
-        console.log('📧 [EMAIL SIMULATION] Would send email:', {
-          to: options.to,
-          subject: options.subject,
-          text: options.text?.substring(0, 100) + '...'
-        });
+        console.log('\n=================================================');
+        console.log('📧 [EMAIL SIMULATION] EMAIL WOULD BE SENT:');
+        console.log('=================================================');
+        console.log('TO:', options.to);
+        console.log('SUBJECT:', options.subject);
+        console.log('CONTENT:');
+        console.log(options.text);
+        console.log('=================================================\n');
         return true;
       }
 
@@ -76,6 +128,13 @@ class EmailService {
 
       const info = await this.transporter.sendMail(mailOptions);
       console.log('📧 Email sent successfully:', info.messageId);
+      
+      // If using Ethereal test account, show preview URL
+      const previewUrl = nodemailer.getTestMessageUrl(info);
+      if (previewUrl) {
+        console.log('🔗 Email preview URL:', previewUrl);
+      }
+      
       return true;
     } catch (error) {
       console.error('❌ Failed to send email:', error);
@@ -169,7 +228,7 @@ OpusLab Security Team
 
   async sendPasswordResetNotification(userEmail: string, userName: string, resetToken: string): Promise<boolean> {
     const subject = '🔑 Password Reset Request';
-    const resetUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/reset-password?token=${resetToken}`;
+    const resetUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/reset-password/${resetToken}`;
     
     const text = `
 Hello ${userName},

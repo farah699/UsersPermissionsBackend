@@ -1,9 +1,11 @@
 import express, { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
+import bcrypt from 'bcrypt';
 import { User } from '../models/User';
 import { AuditLog } from '../models/AuditLog';
 import { authenticate } from '../middleware/auth';
+import { emailService } from '../services/emailService';
 import { 
   loginSchema, 
   refreshTokenSchema, 
@@ -635,85 +637,6 @@ router.post('/change-password', authenticate, async (req: Request, res: Response
   }
 });
 
-/**
- * @swagger
- * /api/auth/forgot-password:
- *   post:
- *     summary: Request password reset
- *     tags: [Authentication]
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - email
- *             properties:
- *               email:
- *                 type: string
- *                 format: email
- *     responses:
- *       200:
- *         description: Password reset email sent (if email exists)
- */
-router.post('/forgot-password', async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { error, value } = forgotPasswordSchema.validate(req.body);
-    if (error) {
-      res.status(400).json({
-        success: false,
-        message: error.details[0].message
-      });
-      return;
-    }
-
-    const { email } = value;
-
-    const user = await User.findOne({ email });
-
-    // Always return success to prevent email enumeration
-    if (!user) {
-      res.json({
-        success: true,
-        message: 'If an account with that email exists, a password reset link has been sent.'
-      });
-      return;
-    }
-
-    // Generate password reset token
-    const resetToken = user.generatePasswordResetToken();
-    await user.save();
-
-    // In a real application, you would send an email here
-    // For this demo, we'll just log the token
-    console.log('Password reset token for', email, ':', resetToken);
-
-    // Create audit log
-    await AuditLog.createLog({
-      action: 'read',
-      resource: 'auth',
-      resourceId: user._id.toString(),
-      userId: user._id,
-      userEmail: user.email,
-      metadata: { action: 'password_reset_request' },
-      ipAddress: req.ip,
-      userAgent: req.get('User-Agent')
-    });
-
-    res.json({
-      success: true,
-      message: 'If an account with that email exists, a password reset link has been sent.',
-      ...(process.env.NODE_ENV === 'development' && { resetToken }) // Only in development
-    });
-  } catch (error) {
-    console.error('Forgot password error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to process password reset request'
-    });
-  }
-});
 
 /**
  * @swagger
@@ -1209,11 +1132,6 @@ router.post('/reset-password', async (req: Request, res: Response): Promise<void
     user.password = hashedPassword;
     user.passwordResetToken = undefined;
     user.passwordResetExpires = undefined;
-    user.passwordChangedAt = new Date();
-    await user.save();
-
-    // Invalidate all existing sessions by incrementing tokenVersion
-    user.tokenVersion += 1;
     await user.save();
 
     // Create audit log

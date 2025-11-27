@@ -1,9 +1,13 @@
+// Load environment variables FIRST, before any other imports
+import dotenv from 'dotenv';
+import path from 'path';
+dotenv.config({ path: path.resolve(__dirname, '..', '.env') });
+
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
-import dotenv from 'dotenv';
 import swaggerJsdoc from 'swagger-jsdoc';
 import swaggerUi from 'swagger-ui-express';
 
@@ -15,8 +19,11 @@ import roleRoutes from './routes/roles';
 import permissionRoutes from './routes/permissions';
 import auditRoutes from './routes/audit';
 
-// Load environment variables
-dotenv.config();
+console.log('Environment loading debug:');
+console.log('__dirname:', __dirname);
+console.log('Resolved .env path:', path.resolve(__dirname, '..', '.env'));
+console.log('SMTP_USER after config:', process.env.SMTP_USER);
+console.log('SMTP_PASS after config:', process.env.SMTP_PASS);
 
 const app = express();
 const PORT = process.env.PORT || 5000;
